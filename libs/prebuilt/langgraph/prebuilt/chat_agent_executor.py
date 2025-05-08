@@ -22,6 +22,7 @@ from langchain_core.language_models import (
 )
 from langchain_core.messages import (
 	AIMessage,
+	HumanMessage,
 	AnyMessage,
 	BaseMessage,
 	SystemMessage,
@@ -644,25 +645,29 @@ def create_react_agent(
 		messages = _get_state_value(state, "messages")
 		last_message = messages[-1]
 
-		has_tools = False
+		has_tool_calls = False
 
 		if debug:
 			logger.info(f"should_continue begin: {last_message}")
 
 		# If there is no function call, then we finish
 		if not isinstance(last_message, AIMessage):
-			has_tools = False
+			has_tool_calls = False
 		else:
 			if last_message.tool_calls:
-				has_tools = True
+				has_tool_calls = True
 			else:
-				has_tools = False
+				has_tool_calls = False
 
-				if llama33_quirk:
+				if llama33_quirk or False:
 					# check for "misplaced" tool call in content (should be JSON format)
 					for i, m in enumerate(re.finditer(r"(\{[\s\,\:\"a-zA-Z]*\"name\"\:[^\}]*\}\s*\})", last_message.content, re.MULTILINE|re.DOTALL)):
-						has_tools = True
-
+						if llama33_quirk and i>=1:
+							if debug:
+								logger.warning(f"Multiple tools found in message content. Llama3.3 supports only one.")
+							break
+						
+						has_tool_calls = True
 						json_str = m[1]
 						tool_call = json.loads(json_str)
 						if "parameters" in tool_call:
@@ -673,12 +678,22 @@ def create_react_agent(
 						if not last_message.tool_calls:
 							last_message.tool_calls = []
 						last_message.tool_calls.append(tool_call)
-		
+					
+					if not has_tool_calls:
+						# Still no tool call found. Maybe the model WANTS to continue, but did specify neither tool_call nor JSON
+						if 	("Let's try" in last_message.content or
+							"I will use" in last_message.content or
+							"First, we will" in last_message.content):
+							if debug:
+								logger.info(f"Model wants to continue...")
+							#state["messages"].append(HumanMessage(content="Please provide a tool call.")) # Not even necessary!
+							return "agent"
+
 		if debug:
 			logger.info(f"should_continue end: {last_message}")
 		
 		# Otherwise if there is, we continue
-		if has_tools:
+		if has_tool_calls:
 			if version == "v1":
 				return "tools"
 			elif version == "v2":
@@ -721,9 +736,9 @@ def create_react_agent(
 			),
 		)
 		workflow.add_edge("generate_structured_response", END)
-		should_continue_destinations = ["tools", "generate_structured_response"]
+		should_continue_destinations = ["agent", "tools", "generate_structured_response"]
 	else:
-		should_continue_destinations = ["tools", END]
+		should_continue_destinations = ["agent", "tools", END]
 
 	# We now add a conditional edge
 	workflow.add_conditional_edges(
