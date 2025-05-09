@@ -422,7 +422,7 @@ def create_react_agent(
 	"""
 	if debug:
 		logger = logging.getLogger(__name__)
-		logging.basicConfig(filename='/tmp/create_react_agent.log', encoding='utf-8', level=logging.DEBUG)
+
 	if version not in ("v1", "v2"):
 		raise ValueError(
 			f"Invalid version {version}. Supported versions are 'v1' and 'v2'."
